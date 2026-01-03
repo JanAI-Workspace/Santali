@@ -12,7 +12,7 @@ try:
     HF_TOKEN = st.secrets["HF_TOKEN"]
     GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
     # Aapka updated Repo Name
-    REPO_ID = "JanAI-Workspace/Santali" 
+    REPO_ID = "JanAI-Workspace/Santali-dataset" 
 except:
     st.error("Secrets setup nahi hain! Please Streamlit Cloud ki settings mein HF_TOKEN aur GEMINI_API_KEY daalein.")
     st.stop()
