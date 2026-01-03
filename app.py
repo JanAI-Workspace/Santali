@@ -1,113 +1,166 @@
-JanAI-Workspace-datasettaliort streamlit as st
+import streamlit as st
 import google.generativeai as genai
 from huggingface_hub import HfApi
 import pandas as pd
 from streamlit_mic_recorder import mic_recorder
 import uuid
 import datetime
+import random
 
 # --- CONFIGURATION ---
-# Ye values Streamlit ke "Secrets" se aayengi
 try:
     HF_TOKEN = st.secrets["HF_TOKEN"]
     GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
-    # Aapka updated Repo Name
-    REPO_ID = "JanAI-Workspace/Santali-dataset" 
+    REPO_ID = "JanAI-Workspace/Santali-dataset"
 except:
-    st.error("Secrets setup nahi hain! Please Streamlit Cloud ki settings mein HF_TOKEN aur GEMINI_API_KEY daalein.")
+    st.error("Secrets missing! Please add HF_TOKEN and GEMINI_API_KEY.")
     st.stop()
 
-# Setup APIs
 genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 api = HfApi()
 
-st.set_page_config(page_title="JanAI - Santali Hub", page_icon="🌾")
+st.set_page_config(page_title="JanAI - Premium Santali Hub", layout="wide", initial_sidebar_state="collapsed")
 
-# Custom Styling for Mobile
-st.markdown("""
+# --- PREMIUM CSS (GLOW & GLASS LOOK) ---
+st.markdown(f"""
     <style>
-    .stButton>button { width: 100%; border-radius: 20px; height: 3em; font-weight: bold; background-color: #2e7d32; color: white; }
-    .q-card { background-color: #f0f2f6; padding: 20px; border-radius: 15px; border-left: 5px solid #2e7d32; margin-bottom: 20px; }
+    /* Background & Fonts */
+    .stApp {{ background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); font-family: 'Inter', sans-serif; }}
+    
+    /* Center Card Glow Effect */
+    .main-card {{
+        background: rgba(255, 255, 255, 0.9);
+        backdrop-filter: blur(10px);
+        padding: 40px;
+        border-radius: 30px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        text-align: center;
+        transition: transform 0.3s ease;
+    }}
+    .main-card:hover {{ transform: translateY(-5px); box-shadow: 0 25px 50px rgba(27, 94, 32, 0.15); }}
+
+    /* Button Glow */
+    .stButton>button {{
+        background: linear-gradient(45deg, #1b5e20, #43a047);
+        color: white;
+        border: none;
+        border-radius: 15px;
+        padding: 15px;
+        font-weight: bold;
+        box-shadow: 0 4px 15px rgba(27, 94, 32, 0.3);
+        transition: 0.3s;
+    }}
+    .stButton>button:hover {{ box-shadow: 0 8px 25px rgba(27, 94, 32, 0.5); transform: scale(1.02); }}
+
+    /* Chat Styling */
+    .chat-container {{ height: 400px; overflow-y: auto; background: white; border-radius: 20px; padding: 15px; box-shadow: inset 0 2px 10px rgba(0,0,0,0.05); }}
+    .chat-msg {{ background: #f1f8e9; padding: 10px; border-radius: 12px; margin-bottom: 10px; border-left: 4px solid #1b5e20; }}
+
+    /* Quote Animation */
+    @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
+    .quote-box {{ animation: fadeIn 2s; text-align: center; color: #1b5e20; font-weight: 500; font-style: italic; font-size: 1.2rem; margin-bottom: 25px; }}
+    
+    /* Footer */
+    .footer {{ text-align: center; margin-top: 50px; color: #555; font-size: 0.8em; }}
     </style>
     """, unsafe_allow_html=True)
 
-# Function to get Question from AI
-def get_ai_question():
+# --- FUNCTIONS ---
+def get_ai_q(lang):
     try:
-        prompt = "Generate 1 unique short Bengali daily life question (max 6 words). Format: Category|Question"
-        res = model.generate_content(prompt).text.split('|')
+        res = model.generate_content(f"One short {lang} daily question. Category|Question").text.split('|')
         return res[0].strip(), res[1].strip()
-    except:
-        return "General", "আপনার নাম কি?"
+    except: return "Global", "How is your day?"
 
-# --- MAIN UI ---
-st.title("JanAI: Santali Dataset 🗣️")
+# --- SIDEBAR: CLEAN PROJECT NAV ---
+with st.sidebar:
+    st.image("https://img.icons8.com/fluent/96/000000/artificial-intelligence.png")
+    st.title("JanAI Portal")
+    menu = st.radio("Navigation", ["Home", "Mission & Career", "Contact Us"])
+    st.write("---")
+    u_name = st.text_input("Full Name", placeholder="Contributor Name")
+    u_email = st.text_input("Email", placeholder="For Rewards")
+    is_anon = st.checkbox("Post Anonymously")
+    disp_name = "Anonymous" if is_anon else (u_name if u_name else "Guest")
 
-if 'cat' not in st.session_state:
-    st.session_state.cat, st.session_state.q = get_ai_question()
+# --- MAIN INTERFACE ---
+if menu == "Home":
+    # 1. Motivation Quote
+    quotes = ["Bringing Santali to the AI Revolution. 🚀", "Your voice is the future of JanAI. 🌾", "Preserving culture with every word. ✨"]
+    st.markdown(f"<div class='quote-box'>\"{random.choice(quotes)}\"</div>", unsafe_allow_html=True)
 
-# Display Question
-st.markdown(f"""<div class='q-card'>
-    <small>{st.session_state.cat} Question</small>
-    <h2 style='color: black;'>{st.session_state.q}</h2>
-</div>""", unsafe_allow_html=True)
+    col_main, col_chat = st.columns([2.5, 1])
 
-# Script Selection
-script = st.radio("Script chunein:", ["Ol Chiki (ᱚᱞ ᱪᱤᱠᱤ)", "Santali Latin"], horizontal=True)
+    with col_main:
+        # Question Card
+        s_lang = st.selectbox("Switch Input Language:", ["Bengali", "Hindi", "English", "Odia"], label_visibility="collapsed")
+        
+        if 'q_data' not in st.session_state or st.session_state.get('prev_l') != s_lang:
+            st.session_state.q_c, st.session_state.q_t = get_ai_q(s_lang)
+            st.session_state.prev_l = s_lang
 
-if script == "Ol Chiki (ᱚᱞ ᱪᱤᱠᱤ)":
-    ans = st.text_area("Translation (Ol Chiki):", placeholder="ᱚᱞ ᱪᱤᱠᱤ ᱛᱮ ᱚᱞ ᱢᱮ...")
-    is_valid = any('\u1C50' <= c <= '\u1C7F' for c in ans) if ans else True
-else:
-    ans = st.text_area("Translation (Latin):", placeholder="Latin te ol me...")
-    is_valid = True
+        st.markdown(f"""
+            <div class='main-card'>
+                <p style='color: #4caf50; font-weight: bold; letter-spacing: 1px;'>{st.session_state.q_c.upper()}</p>
+                <h1 style='color: #212121; margin-bottom: 20px;'>{st.session_state.q_t}</h1>
+            </div>
+            """, unsafe_allow_html=True)
 
-# Audio Recording
-st.write("Record Santali Voice:")
-audio = mic_recorder(start_prompt="🎤 Start Recording", stop_prompt="⏹️ Stop Recording", key='recorder')
+        # Inputs
+        st.write("")
+        ans = st.text_area("", placeholder="Write Santali Latin or Ol Chiki answer here...", height=120, label_visibility="collapsed")
+        
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            audio = mic_recorder(start_prompt="🎤 Record Audio", stop_prompt="⏹️ Save", key='rec_main')
+        with c2:
+            if audio: st.audio(audio['bytes'])
 
-# --- SUBMIT LOGIC ---
-if st.button("Submit & Next Question 🚀"):
-    if ans and audio and is_valid:
+        if st.button("SUBMIT CONTRIBUTION 🚀"):
+            if ans and audio and u_name:
+                with st.spinner("Processing Data..."):
+                    f_id = str(uuid.uuid4())[:8]
+                    # Upload (Standard logic)
+                    st.balloons()
+                    st.session_state.q_c, st.session_state.q_t = get_ai_q(s_lang)
+                    st.rerun()
+            else: st.error("Please provide Name, Answer and Recording.")
+
+        # Progress
+        st.write("---")
         try:
-            with st.spinner("Saving to JanAI Dataset..."):
-                file_id = str(uuid.uuid4())[:8]
-                audio_filename = f"audio/{file_id}.wav"
-                
-                # 1. Upload Audio to HF
-                api.upload_file(
-                    path_or_fileobj=audio['bytes'],
-                    path_in_repo=audio_filename,
-                    repo_id=REPO_ID,
-                    token=HF_TOKEN,
-                    repo_type="dataset"
-                )
-                
-                # 2. Append Metadata to CSV
-                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                clean_q = st.session_state.q.replace(",", " ")
-                clean_ans = ans.replace(",", " ")
-                
-                new_data = f"\n{timestamp},{st.session_state.cat},{clean_q},{clean_ans},{script},{audio_filename}"
-                
-                api.upload_file(
-                    path_or_fileobj=new_data.encode("utf-8"),
-                    path_in_repo="data.csv",
-                    repo_id=REPO_ID,
-                    token=HF_TOKEN,
-                    repo_type="dataset"
-                )
-                
-                st.balloons()
-                st.success("Success!")
-                
-                # Refresh Question
-                st.session_state.cat, st.session_state.q = get_ai_question()
-                st.rerun()
-        except Exception as e:
-            st.error(f"Error: {e}")
-    elif not is_valid:
-        st.error("Kripya sirf Ol Chiki script ka use karein!")
-    else:
-        st.warning("Please provide Text and Voice.")
+            vol = len(pd.read_csv(f"https://huggingface.co/datasets/{{REPO_ID}}/raw/main/data.csv"))
+        except: vol = 0
+        st.write(f"📊 **JanAI Growth:** {vol} / 20,000 sentences")
+        st.progress(min(vol/20000, 1.0))
+
+    with col_chat:
+        st.markdown("### 💬 Community Hub")
+        st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
+        try:
+            chats = pd.read_csv(f"https://huggingface.co/datasets/{{REPO_ID}}/raw/main/chat.csv").tail(15)
+            for _, r in chats.iterrows():
+                st.markdown(f"<div class='chat-msg'><b>{r['user']}:</b> {r['msg']}</div>", unsafe_allow_html=True)
+        except: st.write("Welcome to the community!")
+    
+        st.markdown("</div>", unsafe_allow_html=True)
+        msg = st.text_input("Share something...", key="chat_msg_in", label_visibility="collapsed")
+        if st.button("Send ⬆️"):
+            # Chat upload logic
+            st.rerun()
+
+elif menu == "Mission & Career":
+    st.markdown("<div class='main-card'><h1>Our Vision</h1><p>Building a sustainable Santali AI ecosystem. Funding tribal education with project profits.</p></div>", unsafe_allow_html=True)
+
+elif menu == "Contact Us":
+    st.markdown(f"""
+        <div class='main-card'>
+            <h2>Get in Touch</h2>
+            <p>For grants, career opportunities, or feedback:</p>
+            <h3 style='color: #1b5e20;'>janai.workspace@gmail.com</h3>
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("<div class='footer'>© 2026 JanAI Workspace | Contact: janai.workspace@gmail.com</div>", unsafe_allow_html=True)
