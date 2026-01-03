@@ -1,4 +1,4 @@
-Santali-dataset orttalitaliort streamlit as st
+JanAI-Workspace-datasettaliort streamlit as st
 import google.generativeai as genai
 from huggingface_hub import HfApi
 import pandas as pd
