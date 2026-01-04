@@ -1,268 +1,242 @@
 import streamlit as st
+import firebase_admin
+from firebase_admin import credentials, firestore
+from huggingface_hub import HfApi
 import google.generativeai as genai
 from streamlit_mic_recorder import mic_recorder
 import random
 import json
+import uuid
 import time
+from datetime import datetime
+import io
+import pandas as pd
 
 # --- CONFIGURATION ---
-try:
-    if "GEMINI_API_KEY" in st.secrets:
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-        model = genai.GenerativeModel('gemini-1.5-flash')
-    else:
-        pass
-except Exception:
-    pass
-
 st.set_page_config(page_title="JanAI", layout="wide", initial_sidebar_state="expanded")
 
-# --- CSS STYLING (High Contrast for Visibility) ---
+# 1. SETUP KEYS & CONNECTIONS
+try:
+    # Firebase Setup
+    if not firebase_admin._apps:
+        key_dict = json.loads(st.secrets["FIREBASE_KEY"])
+        cred = credentials.Certificate(key_dict)
+        firebase_admin.initialize_app(cred)
+    db = firestore.client()
+
+    # Gemini Setup
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    model = genai.GenerativeModel('gemini-1.5-flash')
+
+    # Hugging Face Setup
+    api = HfApi(token=st.secrets["HF_TOKEN"])
+    REPO_ID = "JanAI-Workspace/Santali-dataset" # Confirm karein ye sahi hai
+
+except Exception as e:
+    st.error(f"Setup Error: {e}. Check Secrets properly.")
+    st.stop()
+
+# --- PROFESSIONAL CSS ---
 st.markdown("""
     <style>
-    /* Global Text Color - Dark Grey for Readability */
-    .stApp, p, h1, h2, h3, h4, div, span {
-        color: #212121 !important; 
-        font-family: sans-serif;
-    }
+    .stApp { background-color: #f4f8fb; font-family: 'Segoe UI', sans-serif; }
     
-    /* White Card Style with Shadow */
-    .card {
-        background-color: #ffffff;
-        padding: 20px;
-        border-radius: 10px;
-        border: 1px solid #dcdcdc; /* Grey border */
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1); /* Visible Shadow */
-        margin-bottom: 20px;
-    }
-    
-    /* Green Header Box */
+    /* Header */
     .header-box {
-        background-color: #1b5e20;
-        padding: 20px;
-        border-radius: 10px;
-        text-align: center;
+        background: linear-gradient(135deg, #0d47a1, #1565c0);
+        padding: 25px; border-radius: 12px; color: white;
+        margin-bottom: 25px; box-shadow: 0 4px 15px rgba(13, 71, 161, 0.2);
+    }
+    
+    /* Cards */
+    .card {
+        background: white; padding: 25px; border-radius: 12px;
+        border: 1px solid #e1e4e8; box-shadow: 0 2px 8px rgba(0,0,0,0.05);
         margin-bottom: 20px;
     }
-    .header-title {
-        color: #ffffff !important; /* Force White Text on Green Background */
-        font-size: 2.5rem;
-        font-weight: bold;
-        margin: 0;
-    }
-    .header-subtitle {
-        color: #e8f5e9 !important; /* Light Green Text */
-        font-size: 1.1rem;
-        margin-top: 5px;
-    }
-
+    
     /* Buttons */
     .stButton>button {
-        background-color: #1b5e20; /* Dark Green */
-        color: white !important;
-        border-radius: 8px;
-        font-weight: bold;
-        width: 100%;
-        border: none;
+        background-color: #2e7d32; color: white !important;
+        border-radius: 6px; font-weight: 600; width: 100%; padding: 10px;
     }
-    .stButton>button:hover {
-        background-color: #2e7d32;
-    }
+    .stButton>button:hover { background-color: #1b5e20; }
     
-    /* Input Areas */
-    .stTextInput>div>div>input, .stTextArea>div>div>textarea {
-        background-color: #f9f9f9;
-        color: #000000;
-        border: 1px solid #aaa;
-    }
+    h3 { color: #0d47a1 !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- HELPERS ---
-def is_ol_chiki(text):
-    if not text: return False
-    valid = sum(1 for c in text if '\u1C50' <= c <= '\u1C7F')
-    total = sum(1 for c in text if not c.isspace() and c not in ".,!?-1234567890")
-    return (valid / total) > 0.8 if total > 0 else True
+# --- ADMIN FUNCTION (Generate Qs) ---
+def admin_generate_questions(lang, count=3):
+    """Generates questions using Gemini and saves to Firebase"""
+    script_instr = "Output in BENGALI SCRIPT." if lang == "Bengali" else ("Output in ODIA SCRIPT." if lang == "Odia" else "")
+    
+    generated = 0
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for i in range(count):
+        topic = random.choice(["Farming", "Health", "Market", "Family", "Travel", "Culture"])
+        prompt = f"Generate a unique question about '{topic}' in {lang}. {script_instr} JSON: {{'q': 'question_text', 't': '{topic}'}}"
+        
+        try:
+            resp = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+            data = json.loads(resp.text)
+            
+            # Save to Firebase
+            db.collection("questions_pool").add({
+                "language": lang,
+                "text": data['q'],
+                "topic": data['t'],
+                "used": False,
+                "timestamp": firestore.SERVER_TIMESTAMP
+            })
+            generated += 1
+            progress_bar.progress((i + 1) / count)
+        except Exception as e:
+            st.error(f"Gen Error: {e}")
+            
+    status_text.success(f"✅ Generated {generated} questions for {lang}!")
+    return generated
 
-def get_ai_question(lang):
-    """Fetches question. If API fails, returns a fallback."""
-    # Context Mapping (Hidden from UI)
-    context_map = {
-        "Bengali": "West Bengal culture",
-        "Hindi": "Jharkhand daily life",
-        "Odia": "Odisha lifestyle",
-        "English": "General daily life"
-    }
-    context = context_map.get(lang, "daily life")
-    
-    # Forced Script Instructions
-    script_instr = ""
-    if lang == "Bengali": script_instr = "OUTPUT MUST BE IN BENGALI SCRIPT (BANGLA)."
-    elif lang == "Odia": script_instr = "OUTPUT MUST BE IN ODIA SCRIPT."
-    
-    prompt = f"""
-    Ask a short, simple question in {lang} language about {context}.
-    {script_instr}
-    Return ONLY JSON: {{"q": "your_question_here"}}
-    """
-    
+# --- MAIN APP LOGIC ---
+def get_firebase_question(lang):
+    # Fetch random question from Firebase
     try:
-        resp = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-        data = json.loads(resp.text)
-        q_text = data.get("q", "")
-        if q_text: return q_text
+        docs = db.collection("questions_pool").where("language", "==", lang).limit(10).stream()
+        q_list = [doc.to_dict() | {"id": doc.id} for doc in docs]
+        return random.choice(q_list) if q_list else None
     except:
-        pass
-    
-    # FALLBACKS (Agar API fail ho to ye dikhega)
-    defaults = {
-        "Bengali": "আজ আপনার দিনটি কেমন কাটল?", 
-        "Hindi": "आज का दिन कैसा रहा?",
-        "Odia": "ଆଜି ଦିନ କେମିତି କଟିଲା?",
-        "English": "How is your day going?"
-    }
-    return defaults.get(lang, "How are you?")
+        return None
 
-# --- SIDEBAR (NAVIGATION) ---
+def save_to_huggingface(data_dict, audio_bytes=None):
+    try:
+        # Save JSON
+        file_id = str(uuid.uuid4())
+        json_path = f"data/{data_dict['language']}/{file_id}.json"
+        json_str = json.dumps(data_dict, ensure_ascii=False, indent=2)
+        
+        api.upload_file(
+            path_or_fileobj=json_str.encode('utf-8'),
+            path_in_repo=json_path,
+            repo_id=REPO_ID,
+            repo_type="dataset"
+        )
+        # Save Audio (if any)
+        if audio_bytes:
+            audio_path = f"audio/{data_dict['language']}/{file_id}.wav"
+            api.upload_file(
+                path_or_fileobj=audio_bytes,
+                path_in_repo=audio_path,
+                repo_id=REPO_ID,
+                repo_type="dataset"
+            )
+        return True
+    except Exception as e:
+        st.error(f"Save Failed: {e}")
+        return False
+
+# --- SIDEBAR NAV ---
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=60)
-    st.markdown("### Menu")
+    st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=50)
+    st.markdown("### Navigation")
+    menu = st.radio("Mode", ["User Workspace", "Admin Panel"])
     
-    # Task Selector moved to Sidebar
-    selected_task = st.radio(
-        "Choose Activity:", 
-        ["Answer AI", "Describe Image", "Digitize Books", "OCR Handwriting", "Translate"],
-        index=0
-    )
+    st.markdown("---")
+    st.caption("JanAI System v1.0")
+
+# --- PAGE 1: USER WORKSPACE ---
+if menu == "User Workspace":
+    st.markdown("""
+    <div class='header-box'>
+        <h1 style='color:white; margin:0;'>JanAI</h1>
+        <p style='color:#e3f2fd; margin:0;'>Santali Data Collection Portal</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    st.write("---")
-    st.markdown("**Top Contributors**")
-    st.info("1. S. Murmu (120)\n2. R. Hembram (95)\n3. A. Tudu (80)")
-
-# --- MAIN HEADER ---
-st.markdown("""
-<div class='header-box'>
-    <div class='header-title'>JanAI</div>
-    <div class='header-subtitle'>JanAI Santali Dataset</div>
-</div>
-""", unsafe_allow_html=True)
-
-# --- TASK HANDLER ---
-
-# 1. ANSWER AI
-if selected_task == "Answer AI":
-    c1, c2 = st.columns([1, 1])
+    c1, c2 = st.columns([1, 1.2])
     
     with c1:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.markdown("#### 1. Select Language")
+        st.markdown("#### 1. Language")
+        lang = st.selectbox("Select Language", ["Bengali", "Hindi", "Odia", "English"])
         
-        # Simple Language Options
-        lang = st.selectbox("Language", ["Bengali", "Hindi", "Odia", "English"], label_visibility="collapsed")
-        
-        # Logic to fetch question
-        if 'last_lang' not in st.session_state: st.session_state.last_lang = None
-        if 'q_text' not in st.session_state: st.session_state.q_text = ""
-        
-        # Auto-fetch if language changes or empty
-        if st.session_state.last_lang != lang or not st.session_state.q_text:
-            st.session_state.q_text = get_ai_question(lang)
-            st.session_state.last_lang = lang
+        # Load Question Logic
+        if 'curr_q' not in st.session_state or st.session_state.get('l') != lang:
+            with st.spinner("Fetching Question..."):
+                q_data = get_firebase_question(lang)
+                st.session_state.curr_q = q_data
+                st.session_state.l = lang
             
-        st.markdown("---")
-        st.markdown(f"**Question ({lang}):**")
-        st.markdown(f"<h3 style='color:#1b5e20 !important;'>{st.session_state.q_text}</h3>", unsafe_allow_html=True)
+        q = st.session_state.curr_q
         
-        if st.button("🔄 Change Question"):
-            st.session_state.last_lang = None # Forces refresh
-            st.experimental_rerun()
+        st.markdown("---")
+        if q:
+            st.caption(f"Topic: {q.get('topic', 'General')}")
+            st.markdown(f"<h3 style='margin:0'>{q.get('text')}</h3>", unsafe_allow_html=True)
+        else:
+            st.warning("⚠️ Database Empty! Please ask Admin to generate questions.")
+            
+        st.write("")
+        if st.button("🔄 Next Question"):
+             st.session_state.curr_q = get_firebase_question(lang)
+             st.experimental_rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
     with c2:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.markdown("#### 2. Submit Answer")
+        name = st.text_input("Name")
         
-        u_name = st.text_input("Your Name")
+        script = st.radio("Script", ["Ol Chiki", "Latin"], horizontal=True)
+        ans = st.text_area("Answer Text", height=100)
         
-        st.markdown("**Select Script:**")
-        script = st.radio("Script", ["Ol Chiki (ᱚᱞ ᱪᱤᱠᱤ)", "Latin (English)"], horizontal=True, label_visibility="collapsed")
+        c_mic, c_p = st.columns([1,2])
+        with c_mic: audio = mic_recorder(start_prompt="🎤 Record", stop_prompt="⏹️", key="rec")
+        with c_p: 
+            if audio: st.audio(audio['bytes'])
         
-        ph = "Type in Ol Chiki..." if "Ol Chiki" in script else "Type in English letters..."
-        ans_text = st.text_area("Answer", placeholder=ph, height=100)
-        
-        st.write("")
-        c_mic, c_btn = st.columns([1, 2])
-        with c_mic: audio = mic_recorder(start_prompt="🎤 Record", stop_prompt="⏹️", key="rec1")
-        with c_btn:
-            st.write("") # Spacer
-            if st.button("Submit"):
-                if u_name and (ans_text or audio):
-                    if "Ol Chiki" in script and ans_text and not is_ol_chiki(ans_text):
-                        st.error("Error: You selected Ol Chiki but typed English.")
-                    else:
-                        st.success("Saved Successfully!")
-                        time.sleep(1)
-                        st.session_state.last_lang = None # Refresh question
-                        st.experimental_rerun()
-                else:
-                    st.warning("Please enter Name and Answer.")
+        st.write("---")
+        if st.button("Submit to Cloud"):
+            if name and (ans or audio):
+                # Prepare Data
+                payload = {
+                    "user": name,
+                    "language": lang,
+                    "question": q.get('text') if q else "Unknown",
+                    "script": script,
+                    "answer": ans,
+                    "timestamp": str(datetime.now())
+                }
+                audio_bytes = audio['bytes'] if audio else None
+                
+                if save_to_huggingface(payload, audio_bytes):
+                    st.success("✅ Saved Successfully!")
+                    time.sleep(1)
+                    st.session_state.curr_q = get_firebase_question(lang)
+                    st.experimental_rerun()
+            else:
+                st.error("Name and Answer required.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-# 2. DESCRIBE IMAGE
-elif selected_task == "Describe Image":
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        st.image(f"https://picsum.photos/seed/{random.randint(1,999)}/500/350", caption="Describe this image in Santali", use_column_width=True)
-        if st.button("New Image"): st.experimental_rerun()
-    with c2:
-        st.text_input("Your Name", key="img_name")
-        st.text_area("Description (Santali)", height=150, placeholder="What do you see?")
-        if st.button("Submit Description"): st.success("Saved!")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# 3. DIGITIZE BOOKS
-elif selected_task == "Digitize Books":
-    st.info("Task: Type the text exactly as seen in the document below.")
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        st.image("https://placehold.co/600x800/png?text=Santali+Constitution+Page\n(Sample+Document)", use_column_width=True)
-    with c2:
+# --- PAGE 2: ADMIN PANEL ---
+elif menu == "Admin Panel":
+    st.title("🔒 Admin Control")
+    password = st.text_input("Enter Admin Password", type="password")
+    
+    if password == "janai123":  # Password
+        st.success("Access Granted")
+        
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.text_input("Your Name", key="book_name")
-        st.text_area("Transcription", height=300, placeholder="Type content here...")
-        st.button("Submit Page Data")
+        st.markdown("### ⚡ Generate Questions (Gemini -> Firebase)")
+        
+        c_a, c_b = st.columns(2)
+        with c_a:
+            g_lang = st.selectbox("Target Language", ["Bengali", "Hindi", "Odia", "English"])
+        with c_b:
+            qty = st.slider("Quantity", 1, 10, 5)
+            
+        if st.button("🚀 Generate & Save"):
+            admin_generate_questions(g_lang, qty)
         st.markdown("</div>", unsafe_allow_html=True)
-
-# 4. OCR HANDWRITING
-elif selected_task == "OCR Handwriting":
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    st.markdown("#### Upload Handwritten Note")
-    uploaded = st.file_uploader("Upload Image", type=['jpg', 'png'])
-    if uploaded:
-        st.image(uploaded, width=300)
-        st.text_area("Type what is written in the image:", height=150)
-        st.button("Submit OCR Data")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# 5. TRANSLATE
-elif selected_task == "Translate":
-    st.markdown("<div class='card'>", unsafe_allow_html=True)
-    src_lang = st.selectbox("Source Language", ["Hindi", "Bengali", "Odia", "English"])
-    
-    # Fake corpus for demo
-    sentences = {
-        "Hindi": "गाँव का जीवन बहुत शांत होता है।",
-        "Bengali": "গ্রামের জীবন খুব শান্ত।",
-        "Odia": "ଗାଁ ଜୀବନ ବହୁତ ଶାନ୍ତିପୂର୍ଣ୍ଣ |",
-        "English": "Village life is very peaceful."
-    }
-    
-    st.markdown(f"### Translate this to Santali:")
-    st.info(sentences.get(src_lang, "Hello"))
-    
-    st.text_area("Santali Translation", height=100)
-    st.button("Submit Translation")
-    st.markdown("</div>", unsafe_allow_html=True)
-    
+                                          
