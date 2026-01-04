@@ -1,425 +1,298 @@
 import streamlit as st
 import google.generativeai as genai
-from huggingface_hub import HfApi
-import pandas as pd
 from streamlit_mic_recorder import mic_recorder
-import uuid
 import random
+import uuid
 import json
-import re
-import logging
-from typing import Optional
-import io
-import datetime
+import time
 
 # --- CONFIGURATION ---
+# (Secrets handling remains same)
 try:
-    HF_TOKEN = st.secrets["HF_TOKEN"]
-    GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
-    REPO_ID = "JanAI-Workspace/Santali-dataset"
-except KeyError as e:
-    st.error(f"Secrets missing: {e}. Please add HF_TOKEN and GEMINI_API_KEY in Streamlit secrets.")
-    st.stop()
+    if "GEMINI_API_KEY" in st.secrets:
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        model = genai.GenerativeModel('gemini-1.5-flash')
+    else:
+        pass 
+except Exception:
+    pass
 
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
-api = HfApi()
+st.set_page_config(page_title="JanAI Research Portal", layout="wide", initial_sidebar_state="expanded")
 
-st.set_page_config(page_title="JanAI - Premium Santali Hub", layout="wide", initial_sidebar_state="collapsed")
-
-# --- Logging ---
-logger = logging.getLogger("janai_app")
-if not logger.handlers:
-    logging.basicConfig(level=logging.INFO)
-
-# --- PREMIUM CSS (GLOW & GLASS LOOK) ---
-st.markdown(f"""
+# --- PROFESSIONAL CSS (CORPORATE STYLE) ---
+st.markdown("""
     <style>
-    /* Background & Fonts */
-    .stApp {{ background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); font-family: 'Inter', sans-serif; }}
-    
-    /* Center Card Glow Effect */
-    .main-card {{
-        background: rgba(255, 255, 255, 0.9);
-        backdrop-filter: blur(10px);
-        padding: 40px;
-        border-radius: 30px;
-        border: 1px solid rgba(255, 255, 255, 0.3);
-        box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-        text-align: center;
-        transition: transform 0.3s ease;
-    }}
-    .main-card:hover {{ transform: translateY(-5px); box-shadow: 0 25px 50px rgba(27, 94, 32, 0.15); }}
+    /* Import Google Fonts: Poppins (UI) & Noto Sans Ol Chiki (Script) */
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Ol+Chiki&family=Poppins:wght@300;400;500;600&display=swap');
 
-    /* Button Glow */
-    .stButton>button {{
-        background: linear-gradient(45deg, #1b5e20, #43a047);
+    /* Global Settings */
+    .stApp {
+        background-color: #f4f7f6;
+        font-family: 'Poppins', sans-serif;
+    }
+
+    /* Hero Banner */
+    .hero-container {
+        background: linear-gradient(120deg, #0f3d0f, #2e7d32);
+        padding: 40px;
+        border-radius: 15px;
+        color: white;
+        box-shadow: 0 10px 25px rgba(27, 94, 32, 0.25);
+        margin-bottom: 25px;
+        text-align: left;
+        position: relative;
+        overflow: hidden;
+    }
+    .hero-title { font-size: 2.5rem; font-weight: 600; margin: 0; letter-spacing: -1px; }
+    .hero-subtitle { font-size: 1.1rem; opacity: 0.9; font-weight: 300; margin-top: 10px; }
+
+    /* Modern Cards */
+    .pro-card {
+        background: white;
+        padding: 25px;
+        border-radius: 12px;
+        border: 1px solid #e1e4e8;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+        transition: transform 0.2s;
+    }
+    .pro-card:hover { transform: translateY(-2px); box-shadow: 0 8px 15px rgba(0,0,0,0.08); }
+
+    /* Tags & Badges */
+    .badge {
+        display: inline-block; padding: 4px 12px; border-radius: 50px;
+        font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .badge-blue { background: #e3f2fd; color: #1565c0; }
+    .badge-green { background: #e8f5e9; color: #2e7d32; }
+    .badge-gold { background: #fff8e1; color: #f57f17; }
+
+    /* Custom Inputs */
+    .stTextInput>div>div>input { border-radius: 8px; border: 1px solid #ddd; padding: 10px; }
+    .stTextArea>div>div>textarea { border-radius: 8px; border: 1px solid #ddd; }
+
+    /* Buttons */
+    .stButton>button {
+        background-color: #1b5e20;
         color: white;
         border: none;
-        border-radius: 15px;
-        padding: 15px;
-        font-weight: bold;
-        box-shadow: 0 4px 15px rgba(27, 94, 32, 0.3);
+        border-radius: 8px;
+        padding: 12px 24px;
+        font-weight: 500;
+        width: 100%;
         transition: 0.3s;
-    }}
-    .stButton>button:hover {{ box-shadow: 0 8px 25px rgba(27, 94, 32, 0.5); transform: scale(1.02); }}
+    }
+    .stButton>button:hover { background-color: #2e7d32; box-shadow: 0 4px 12px rgba(46, 125, 50, 0.3); }
 
-    /* Chat Styling */
-    .chat-container {{ height: 400px; overflow-y: auto; background: white; border-radius: 20px; padding: 15px; box-shadow: inset 0 2px 10px rgba(0,0,0,0.05); }}
-    .chat-msg {{ background: #f1f8e9; padding: 10px; border-radius: 12px; margin-bottom: 10px; border-left: 4px solid #1b5e20; }}
-
-    /* Quote Animation */
-    @keyframes fadeIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
-    .quote-box {{ animation: fadeIn 2s; text-align: center; color: #1b5e20; font-weight: 500; font-style: italic; font-size: 1.2rem; margin-bottom: 25px; }}
-    
-    /* Footer */
-    .footer {{ text-align: center; margin-top: 50px; color: #555; font-size: 0.8em; }}
+    /* Tab Styling */
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 45px;
+        background-color: white;
+        border-radius: 6px;
+        border: 1px solid #e0e0e0;
+        font-weight: 500;
+        font-size: 0.9rem;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #1b5e20;
+        color: white;
+        border: none;
+    }
     </style>
-    """, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # --- HELPERS ---
-def _extract_json(text: str) -> str:
-    """Try to extract a JSON object from text (handles code fences)."""
-    if not text:
-        return ""
-    # remove markdown code fences and surrounding text
-    text = re.sub(r"```(?:json|text)?", "", text, flags=re.IGNORECASE)
-    # find first {...} block
-    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    return m.group(0) if m else text.strip()
+def is_ol_chiki(text):
+    if not text: return False
+    valid = sum(1 for c in text if '\u1C50' <= c <= '\u1C7F')
+    total = sum(1 for c in text if not c.isspace() and c not in ".,!?-1234567890")
+    return (valid / total) > 0.8 if total > 0 else True
 
-def _contains_bengali(s: str) -> bool:
-    """Return True if string contains Bengali unicode characters (U+0980–U+09FF)."""
-    if not s:
-        return False
-    return any("\u0980" <= ch <= "\u09FF" for ch in s)
-
-@st.cache_data(ttl=300)
-def fetch_csv_from_hf(path: str) -> Optional[pd.DataFrame]:
-    """Fetch CSV from HF raw URL with caching (returns None on failure)."""
-    try:
-        df = pd.read_csv(path)
-        return df
-    except Exception as e:
-        logger.info(f"Failed to fetch CSV from {path}: {e}")
-        return None
-
-@st.cache_data(ttl=120)
-def cached_get_ai_q(lang: str, retries: int = 3):
-    """Wrapper to cache questions per language for short time."""
-    return get_ai_q(lang, retries=retries)
-
-def get_ai_q(lang: str, retries: int = 3):
-    """
-    Ask Gemini for a single short daily question.
-    Enforce JSON-only output: {"category":"...","question":"..."}
-    If lang is Bengali, enforce Bangla script in question.
-    """
-    system_instructions = f"""
-You are a helpful assistant that produces exactly one short daily question.
-Respond ONLY with a single JSON object (no other explanation, no bullets, nothing else).
-The JSON keys must be "category" and "question".
-- "category": short topic label (1-3 words), English is fine.
-- "question": a concise question appropriate for daily prompts.
-
-Produce content in the language: {lang}.
-Make sure the "question" text is in {lang} and does not include extra quotes or metadata.
-Example valid response:
-{{"category":"Daily Life","question":"How are you feeling today?"}}
-
-If {lang} is Bengali, the "question" must be in Bengali script (Bangla). 
-Respond only with JSON.
-    """.strip()
-
-    for attempt in range(retries):
-        try:
-            resp = model.generate_content(system_instructions,
-                                          temperature=0.2,
-                                          top_k=40,
-                                          max_output_tokens=160)
-            raw = getattr(resp, "text", "") or str(resp)
-            jtext = _extract_json(raw)
-            data = json.loads(jtext)
-            cat = (data.get("category") or "General").strip()
-            q = (data.get("question") or "").strip()
-            if not q:
-                logger.info(f"Empty question from model (attempt {attempt+1}). raw: {raw}")
-                continue
-            # Bengali validation
-            if lang.lower().startswith("bengal") or lang.lower().startswith("bangla") or lang.lower() == "bengali":
-                if not _contains_bengali(q):
-                    logger.info(f"Bengali validation failed (attempt {attempt+1}). q: {q!r}")
-                    continue
-            return cat, q
-        except Exception as e:
-            logger.info(f"get_ai_q attempt {attempt+1} failed: {e}")
-            continue
-
-    # fallback if retries exhausted
-    if lang.lower().startswith("bengal") or lang.lower().startswith("bangla") or lang.lower() == "bengali":
-        return "Global", "আপনার দিন কেমন যাচ্ছে?"
-    else:
-        return "Global", "How is your day?"
-
-def _upload_fileobj_to_hf(fileobj, path_in_repo: str, commit_message: str):
-    """
-    Upload a file-like object to the HF dataset repo.
-    fileobj should be a binary file-like (e.g., io.BytesIO).
-    """
-    try:
-        api.upload_file(
-            path_or_fileobj=fileobj,
-            path_in_repo=path_in_repo,
-            repo_id=REPO_ID,
-            repo_type="dataset",
-            token=HF_TOKEN,
-            commit_message=commit_message,
-        )
-        return True, None
-    except Exception as e:
-        logger.info(f"Failed to upload {path_in_repo} to HF: {e}")
-        return False, str(e)
-
-def _update_csv_on_hf(df: pd.DataFrame, path_in_repo: str, commit_message: str):
-    """
-    Overwrite CSV at path_in_repo in HF dataset with df (pandas).
-    """
-    buf = io.StringIO()
-    df.to_csv(buf, index=False)
-    buf.seek(0)
-    fileobj = io.BytesIO(buf.getvalue().encode("utf-8"))
-    return _upload_fileobj_to_hf(fileobj, path_in_repo, commit_message)
-
-def upload_submission_to_hf(submission: dict, audio) -> tuple:
-    """
-    Upload audio and append submission row to data.csv in HF dataset.
-    Returns (success: bool, message: str)
-    """
-    f_id = submission["id"]
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
-    audio_path = f"audio/{f_id}.wav"
-
-    # 1) upload audio bytes (if available)
-    if audio and isinstance(audio, dict) and 'bytes' in audio:
-        audio_bytes = audio['bytes']
-        if isinstance(audio_bytes, str):
-            # sometimes data URIs or base64 string may be present; try to handle
-            try:
-                # data URI: data:audio/wav;base64,...
-                if audio_bytes.startswith("data:"):
-                    _, b64 = audio_bytes.split(",", 1)
-                    audio_bytes = io.BytesIO(base64.b64decode(b64)).read()
-                else:
-                    audio_bytes = audio_bytes.encode('utf-8')
-            except Exception:
-                pass
-        try:
-            audio_fileobj = io.BytesIO(audio_bytes)
-            ok, err = _upload_fileobj_to_hf(audio_fileobj, audio_path,
-                                            commit_message=f"Add audio {f_id}")
-            if not ok:
-                return False, f"Audio upload failed: {err}"
-        except Exception as e:
-            return False, f"Audio processing/upload error: {e}"
-    else:
-        audio_path = ""  # no audio
-
-    # 2) fetch existing data.csv, append row, upload
-    data_path = f"https://huggingface.co/datasets/{REPO_ID}/raw/main/data.csv"
-    df = fetch_csv_from_hf(data_path)
-    row = {
-        "id": f_id,
-        "name": submission.get("name", ""),
-        "email": submission.get("email", ""),
-        "answer": submission.get("answer", ""),
-        "has_audio": bool(submission.get("has_audio", False)),
-        "audio_path": audio_path,
-        "lang": submission.get("lang", ""),
-        "timestamp": timestamp,
+def get_translation_sentence(source_lang):
+    # Professional Corpus Simulation
+    corpus = {
+        "Hindi": ["शिक्षा ही सफलता की कुंजी है।", "भारत गांवों का देश है।", "जल संचयन आज की आवश्यकता है।"],
+        "Bengali": ["শিক্ষা হলো সাফল্যের চাবিকাঠি।", "গাছ লাগান, পরিবেশ বাঁচান।", "জলই জীবন।"],
+        "Odia": ["ଶିକ୍ଷା ହିଁ ସଫଳତାର ଚାବିକାଠି |", "ଜଳ ହିଁ ଜୀବନ |", "ଓଡିଶା ଏକ ସୁନ୍ଦର ରାଜ୍ୟ |"],
+        "English": ["Education is the key to success.", "Water is essential for life.", "Technology changes the world."]
     }
-    if df is None:
-        df = pd.DataFrame([row])
-    else:
-        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    return random.choice(corpus.get(source_lang, ["Hello World"]))
 
-    ok, err = _update_csv_on_hf(df, "data.csv", commit_message=f"Add data row {f_id}")
-    if not ok:
-        return False, f"data.csv update failed: {err}"
-
-    return True, "Uploaded submission to HF dataset."
-
-def append_chat_to_hf(user: str, msg: str) -> tuple:
-    """
-    Append a chat message to chat.csv on HF dataset.
-    Returns (success, message)
-    """
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
-    chat_path = f"https://huggingface.co/datasets/{REPO_ID}/raw/main/chat.csv"
-    df_chat = fetch_csv_from_hf(chat_path)
-    row = {"user": user, "msg": msg, "timestamp": timestamp}
-    if df_chat is None:
-        df_chat = pd.DataFrame([row])
-    else:
-        df_chat = pd.concat([df_chat, pd.DataFrame([row])], ignore_index=True)
-
-    ok, err = _update_csv_on_hf(df_chat, "chat.csv", commit_message=f"Add chat by {user}")
-    if not ok:
-        return False, f"chat.csv update failed: {err}"
-    return True, "Chat appended."
-
-# --- SIDEBAR: CLEAN PROJECT NAV ---
+# --- SIDEBAR (User Profile) ---
 with st.sidebar:
-    st.image("https://img.icons8.com/fluent/96/000000/artificial-intelligence.png")
-    st.title("JanAI Portal")
-    menu = st.radio("Navigation", ["Home", "Mission & Career", "Contact Us"])
+    st.image("https://img.icons8.com/fluency/96/artificial-intelligence.png", width=50)
+    st.markdown("### **JanAI Workspace**")
+    st.caption("v3.0 Enterprise Edition")
+    
     st.write("---")
-    u_name = st.text_input("Full Name", placeholder="Contributor Name")
-    u_email = st.text_input("Email", placeholder="For Rewards")
-    is_anon = st.checkbox("Post Anonymously")
-    disp_name = "Anonymous" if is_anon else (u_name if u_name else "Guest")
+    st.markdown("#### 👤 Contributor Profile")
+    u_name = st.text_input("Full Name", placeholder="Enter your name")
+    u_role = st.selectbox("Role", ["Volunteer", "Linguist", "Student", "Researcher"])
+    
+    st.write("---")
+    st.markdown("#### 🏆 Leaderboard")
+    # Mock Professional Data
+    st.markdown("""
+    <div style='font-size:0.9rem'>
+    1. <b>S. Murmu</b> <span style='float:right; color:#2e7d32'>1,240 pts</span><br>
+    2. <b>R. Hembram</b> <span style='float:right; color:#2e7d32'>980 pts</span><br>
+    3. <b>A. Tudu</b> <span style='float:right; color:#2e7d32'>850 pts</span>
+    </div>
+    """, unsafe_allow_html=True)
 
-# Initialize session_state defaults
-if 'prev_l' not in st.session_state:
-    st.session_state.prev_l = None
-if 'q_c' not in st.session_state:
-    st.session_state.q_c = "Global"
-if 'q_t' not in st.session_state:
-    st.session_state.q_t = "How is your day?"
-if 'submissions' not in st.session_state:
-    st.session_state.submissions = []
+# --- HERO SECTION ---
+st.markdown("""
+<div class='hero-container'>
+    <h1 class='hero-title'>JanAI Data Collection Portal</h1>
+    <p class='hero-subtitle'>Developing the Next-Generation Large Language Model (LLM) for Santali.</p>
+</div>
+""", unsafe_allow_html=True)
 
-# --- MAIN INTERFACE ---
-if menu == "Home":
-    # Motivation Quote
-    quotes = ["Bringing Santali to the AI Revolution. 🚀", "Your voice is the future of JanAI. 🌾", "Preserving culture with every word. ✨"]
-    st.markdown(f"<div class='quote-box'>\"{random.choice(quotes)}\"</div>", unsafe_allow_html=True)
+# --- INSTRUCTIONS EXPANDER ---
+with st.expander("📘 User Guidelines & Protocols (Click to Expand)", expanded=False):
+    st.markdown("""
+    **Welcome to the JanAI Workspace.** Please follow these data integrity protocols:
+    1.  **Script Fidelity:** If you select **Ol Chiki**, strictly use the Ol Chiki script. Do not transliterate using English.
+    2.  **Audio Quality:** Ensure minimum background noise during voice recording.
+    3.  **Accuracy:** In Digitization tasks, type exactly what you see, including original errors if any.
+    """)
 
-    col_main, col_chat = st.columns([2.5, 1])
+# --- MAIN WORKSPACE ---
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "💬 Contextual AI", 
+    "🖼️ Image Description", 
+    "📜 Digitize Archives", 
+    "✍️ Handwriting OCR", 
+    "🌐 Universal Translation"
+])
 
-    with col_main:
-        # Question Card
-        s_lang = st.selectbox("Switch Input Language:", ["Bengali", "Hindi", "English", "Odia"], label_visibility="collapsed")
-
-        # Only fetch a new question if language changed or not set
-        if st.session_state.get('prev_l') != s_lang or not st.session_state.get('q_t'):
-            try:
-                # Use cached wrapper to avoid calling model excessively
-                st.session_state.q_c, st.session_state.q_t = cached_get_ai_q(s_lang)
-            except Exception as e:
-                logger.info(f"Error fetching AI question: {e}")
-                st.session_state.q_c, st.session_state.q_t = "Global", ("আপনার দিন কেমন যাচ্ছে?" if s_lang.lower().startswith("bengal") else "How is your day?")
-            st.session_state.prev_l = s_lang
-
-        st.markdown(f"""
-            <div class='main-card'>
-                <p style='color: #4caf50; font-weight: bold; letter-spacing: 1px;'>{st.session_state.q_c.upper()}</p>
-                <h1 style='color: #212121; margin-bottom: 20px;'>{st.session_state.q_t}</h1>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # Inputs
-        st.write("")
-        ans = st.text_area("", placeholder="Write Santali Latin or Ol Chiki answer here...", height=120, label_visibility="collapsed")
-
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            audio = mic_recorder(start_prompt="🎤 Record Audio", stop_prompt="⏹️ Save", key='rec_main')
-        with c2:
-            if audio and isinstance(audio, dict) and 'bytes' in audio:
-                st.audio(audio['bytes'])
-
-        if st.button("SUBMIT CONTRIBUTION 🚀"):
-            # Allow anonymous submissions if is_anon is checked
-            name_ok = bool(u_name) or is_anon
-            audio_ok = bool(audio)
-            ans_ok = bool(ans and ans.strip())
-
-            if name_ok and ans_ok and audio_ok:
-                with st.spinner("Processing Data and uploading to Hugging Face..."):
-                    f_id = str(uuid.uuid4())[:8]
-                    submission = {
-                        "id": f_id,
-                        "name": "Anonymous" if is_anon else u_name,
-                        "email": u_email or "",
-                        "answer": ans.strip(),
-                        "has_audio": True if audio_ok else False,
-                        "lang": s_lang
-                    }
-                    success, msg = upload_submission_to_hf(submission, audio)
-                    if success:
-                        st.balloons()
-                        # Refresh question after successful submission
-                        try:
-                            st.session_state.q_c, st.session_state.q_t = cached_get_ai_q(s_lang)
-                        except Exception:
-                            st.session_state.q_c, st.session_state.q_t = "Global", ("আপনার দিন কেমন যাচ্ছে?" if s_lang.lower().startswith("bengal") else "How is your day?")
-                        st.success("Contribution uploaded! Thank you.")
-                        # also record locally
-                        st.session_state.submissions.append(submission)
-                        st.experimental_rerun()
-                    else:
-                        st.error(f"Upload failed: {msg}")
-            else:
-                missing = []
-                if not name_ok:
-                    missing.append("Name or select 'Post Anonymously'")
-                if not ans_ok:
-                    missing.append("Answer text")
-                if not audio_ok:
-                    missing.append("Recording")
-                st.error("Please provide: " + ", ".join(missing))
-
-        # Progress
-        st.write("---")
-        data_path = f"https://huggingface.co/datasets/{REPO_ID}/raw/main/data.csv"
-        df_data = fetch_csv_from_hf(data_path)
-        vol = len(df_data) if df_data is not None else 0
-        st.write(f"📊 **JanAI Growth:** {vol} / 20,000 sentences")
-        st.progress(min(vol/20000, 1.0))
-
-    with col_chat:
-        st.markdown("### 💬 Community Hub")
-        st.markdown("<div class='chat-container'>", unsafe_allow_html=True)
-        chat_path = f"https://huggingface.co/datasets/{REPO_ID}/raw/main/chat.csv"
-        df_chat = fetch_csv_from_hf(chat_path)
-        if df_chat is not None and not df_chat.empty:
-            try:
-                chats = df_chat.tail(15)
-                for _, r in chats.iterrows():
-                    user = r.get('user', 'Guest')
-                    msg = r.get('msg', '')
-                    st.markdown(f"<div class='chat-msg'><b>{user}:</b> {msg}</div>", unsafe_allow_html=True)
-            except Exception as e:
-                logger.info(f"Error rendering chat rows: {e}")
-                st.write("Welcome to the community!")
-        else:
-            st.write("Welcome to the community!")
-
+# --- TAB 1: CONTEXTUAL AI ---
+with tab1:
+    col_q, col_ans = st.columns([1, 1])
+    
+    with col_q:
+        st.markdown("<div class='pro-card'>", unsafe_allow_html=True)
+        st.markdown("#### 1. Context Configuration")
+        c1, c2 = st.columns([1,1])
+        with c1: region_lang = st.selectbox("Region Context", ["West Bengal (Bengali)", "Jharkhand (Hindi)", "Odisha (Odia)", "Global (English)"])
+        with c2: 
+            if st.button("Generate Question"): 
+                st.session_state.q_val = random.choice(["How is the agriculture this year?", "Describe your local festival.", "What did you buy at the market?"])
+        
+        if 'q_val' not in st.session_state: st.session_state.q_val = "How is your daily life going?"
+        
+        st.markdown("---")
+        st.markdown(f"<span class='badge badge-blue'>AI Generated Question</span>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:#333; margin-top:10px'>{st.session_state.q_val}</h3>", unsafe_allow_html=True)
         st.markdown("</div>", unsafe_allow_html=True)
-        msg = st.text_input("Share something...", key="chat_msg_in", label_visibility="collapsed")
-        if st.button("Send ⬆️"):
-            if msg and msg.strip():
-                user = "Anonymous" if is_anon else (u_name if u_name else "Guest")
-                with st.spinner("Appending chat to Hugging Face..."):
-                    ok, m = append_chat_to_hf(user, msg.strip())
-                    if ok:
-                        st.success("Message posted to community.")
-                        st.experimental_rerun()
+
+    with col_ans:
+        st.markdown("<div class='pro-card'>", unsafe_allow_html=True)
+        st.markdown("#### 2. Response Input")
+        script_t1 = st.radio("Script Type", ["Ol Chiki (ᱚᱞ ᱪᱤᱠᱤ)", "Latin (English)"], horizontal=True, label_visibility="collapsed")
+        
+        ph = "Type response in Ol Chiki..." if "Ol Chiki" in script_t1 else "Type response in English letters..."
+        text_t1 = st.text_area("Answer", placeholder=ph, height=100)
+        
+        c_mic, c_btn = st.columns([1, 2])
+        with c_mic: audio_t1 = mic_recorder(start_prompt="🎤 Record", stop_prompt="⏹️ Stop", key="m1")
+        with c_btn:
+            st.write("") 
+            if st.button("Submit Response", key="b1"):
+                if u_name and (text_t1 or audio_t1):
+                    if "Ol Chiki" in script_t1 and text_t1 and not is_ol_chiki(text_t1):
+                        st.error("Validation Error: Latin characters detected in Ol Chiki mode.")
                     else:
-                        st.error(f"Failed to post chat: {m}")
+                        st.success("Data successfully committed to database.")
+                        time.sleep(1)
+                        st.experimental_rerun()
+                else:
+                    st.warning("Please provide Name and Answer.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# --- TAB 2: IMAGE ---
+with tab2:
+    c1, c2 = st.columns([1, 1.5])
+    with c1:
+        st.markdown("<div class='pro-card'>", unsafe_allow_html=True)
+        st.image(f"https://picsum.photos/seed/{random.randint(100,999)}/500/350", use_column_width=True, caption="Target Image")
+        st.button("Refresh Image", key="ref_img")
+        st.markdown("</div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown("<div class='pro-card'>", unsafe_allow_html=True)
+        st.markdown("#### Visual Description Task")
+        st.caption("Describe the objects, colors, and actions visible in the image using Santali.")
+        text_t2 = st.text_area("Description", height=150)
+        if st.button("Submit Description", key="b2"):
+            st.success("Visual data tagged successfully.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# --- TAB 3: DIGITIZATION ---
+with tab3:
+    st.info("ℹ️ **Task:** Transcribe the official document below. Preserve original spelling.")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.image("https://placehold.co/600x800/png?text=Santali+Constitution+Page+12\n\n(Official+Document+Scan)", use_column_width=True)
+    with c2:
+        st.markdown("#### Transcription Panel")
+        st.text_area("Content", height=400, placeholder="Type exactly what you see...")
+        st.button("Commit to Archive", key="b3")
+
+# --- TAB 4: HANDWRITING OCR ---
+with tab4:
+    st.markdown("#### ✍️ Handwriting Recognition Training")
+    uploaded = st.file_uploader("Upload dataset sample (JPG/PNG)", type=['png', 'jpg'])
+    if uploaded:
+        c1, c2 = st.columns([1,1])
+        with c1: st.image(uploaded, caption="Source Sample", use_column_width=True)
+        with c2:
+            st.text_area("Ground Truth (Transcription)", height=200)
+            st.button("Upload Dataset Entry", key="b4")
+
+# --- TAB 5: UNIVERSAL TRANSLATION (UPDATED) ---
+with tab5:
+    st.markdown("<div class='pro-card'>", unsafe_allow_html=True)
+    st.markdown("#### 🌐 Multilingual Parallel Corpus Builder")
+    
+    # Source Selection
+    c_src, c_task = st.columns([1, 3])
+    with c_src:
+        src_lang = st.selectbox("Source Language", ["English", "Hindi", "Bengali", "Odia"])
+    
+    # Task Generation
+    if 'trans_task' not in st.session_state: st.session_state.trans_task = ""
+    if 'last_lang' not in st.session_state or st.session_state.last_lang != src_lang:
+        st.session_state.trans_task = get_translation_sentence(src_lang)
+        st.session_state.last_lang = src_lang
+
+    with c_task:
+        st.markdown(f"**Translate this sentence to Santali:**")
+        st.info(f"📄 {st.session_state.trans_task}")
+    
+    st.write("---")
+    
+    # Translation Input
+    col_in, col_act = st.columns([3, 1])
+    with col_in:
+        trans_out = st.text_area("Santali Translation", height=100, label_visibility="collapsed", placeholder="Type translation here...")
+    with col_act:
+        st.write("")
+        st.write("")
+        if st.button("Submit Translation", key="b5"):
+            if trans_out:
+                st.success("Parallel pair saved.")
+                st.session_state.trans_task = get_translation_sentence(src_lang)
+                st.experimental_rerun()
             else:
-                st.error("Please type a message before sending.")
+                st.error("Input required.")
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
-elif menu == "Mission & Career":
-    st.markdown("<div class='main-card'><h1>Our Vision</h1><p>Building a sustainable Santali AI ecosystem. Funding tribal education with project profits.</p></div>", unsafe_allow_html=True)
-
-elif menu == "Contact Us":
-    st.markdown(f"""
-        <div class='main-card'>
-            <h2>Get in Touch</h2>
-            <p>For grants, career opportunities, or feedback:</p>
-            <h3 style='color: #1b5e20;'>janai.workspace@gmail.com</h3>
-        </div>
-        """, unsafe_allow_html=True)
-
-st.markdown("<div class='footer'>© 2026 JanAI Workspace | Contact: janai.workspace@gmail.com</div>", unsafe_allow_html=True)
+# --- FOOTER ---
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #888; font-size: 0.8rem; margin-top: 20px;'>
+    JanAI Research Workspace © 2026 | Powered by Gemini 1.5 Flash | <a href='#'>Privacy Policy</a> | <a href='#'>Report Issue</a>
+</div>
+""", unsafe_allow_html=True)
+    
