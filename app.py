@@ -26,11 +26,13 @@ try:
 
     # Gemini Setup
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-   model = genai.GenerativeModel('gemini-pro')
+    
+    # --- INDENTATION FIXED HERE ---
+    model = genai.GenerativeModel('gemini-pro')
  
-# Hugging Face Setup
+    # Hugging Face Setup
     api = HfApi(token=st.secrets["HF_TOKEN"])
-    REPO_ID = "JanAI-Workspace/Santali-dataset" # Confirm karein ye sahi hai
+    REPO_ID = "JanAI-Workspace/Santali-dataset" 
 
 except Exception as e:
     st.error(f"Setup Error: {e}. Check Secrets properly.")
@@ -239,4 +241,4 @@ elif menu == "Admin Panel":
         if st.button("🚀 Generate & Save"):
             admin_generate_questions(g_lang, qty)
         st.markdown("</div>", unsafe_allow_html=True)
-                                          
+        
