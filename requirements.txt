@@ -4,4 +4,3 @@ streamlit-mic-recorder
 pandas
 huggingface-hub
 firebase-admin
-ase-admin
