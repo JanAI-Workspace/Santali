@@ -27,7 +27,8 @@ try:
     # Gemini Setup
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
    model = genai.GenerativeModel('gemini-pro')
- # Hugging Face Setup
+ 
+# Hugging Face Setup
     api = HfApi(token=st.secrets["HF_TOKEN"])
     REPO_ID = "JanAI-Workspace/Santali-dataset" # Confirm karein ye sahi hai
 
