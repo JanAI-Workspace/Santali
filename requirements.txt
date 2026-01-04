@@ -1,5 +1,6 @@
 streamlit
 google-generativeai
-huggingface_hub
 streamlit-mic-recorder
 pandas
+huggingface-hub
+firebase-admin
